@@ -66,11 +66,20 @@ def main():
         return
 
     print(f"Found {len(non_followers)} users that you follow but they don't follow you back.")
-    print("Users to unfollow:")
-    for user in non_followers:
-        print(f"- {user.username} ({user.full_name})")
 
-    for user in non_followers:
+    print("Fetching user information...")
+    non_followers_full = []
+    for user_short in non_followers:
+        try:
+            non_followers_full.append(client.user_info(user_short.pk))
+        except Exception as e:
+            print(f"Could not fetch info for {user_short.username}: {e}")
+
+    print("Users to unfollow:")
+    for user in non_followers_full:
+        print(f"- {user.username} ({user.full_name}) - Followers: {user.follower_count}")
+
+    for user in non_followers_full:
         confirm = input(f"Unfollow {user.username}? (y/n): ")
         if confirm.lower() == 'y':
             unfollow_user(client, user)
