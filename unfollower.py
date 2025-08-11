@@ -1,85 +1,81 @@
 import os
-import json
-import time
-from datetime import datetime
-from instagrapi import Client
 import getpass
+from instagrapi import Client
 
 def get_user_credentials():
+    """Prompts the user for their Instagram username and password."""
     username = input("Enter your Instagram username: ")
     password = getpass.getpass("Enter your Instagram password: ")
     return username, password
 
-def load_followers(client, username):
+def get_non_followers(client, username):
+    """
+    Returns a list of users that the given user follows but who do not follow back.
+    """
     user_id = client.user_id_from_username(username)
+    following = client.user_following(user_id)
     followers = client.user_followers(user_id)
-    return {user.username: user.full_name for user in followers.values()}
 
-def compare_followers(old_followers, new_followers):
-    gained = set(new_followers.keys()) - set(old_followers.keys())
-    lost = set(old_followers.keys()) - set(new_followers.keys())
-    return gained, lost
+    following_pks = set(following.keys())
+    follower_pks = set(followers.keys())
 
-def save_followers(followers, target_username):
-    folder_path = os.path.join(os.getcwd(), target_username)
-    os.makedirs(folder_path, exist_ok=True)
-    file_path = os.path.join(folder_path, 'followers.json')
-    with open(file_path, 'w') as f:
-        json.dump(followers, f)
+    non_follower_pks = following_pks - follower_pks
+    return [following[pk] for pk in non_follower_pks]
 
-def load_saved_followers(target_username):
-    folder_path = os.path.join(os.getcwd(), target_username)
-    file_path = os.path.join(folder_path, 'followers.json')
-    if os.path.exists(file_path):
-        with open(file_path, 'r') as f:
-            return json.load(f)
-    return {}
-
-def print_changes(gained, lost, new_followers):
-    print(f"Followers gained ({len(gained)}):")
-    for username in gained:
-        print(f"- {username} ({new_followers[username]})")
-    
-    print(f"\nFollowers lost ({len(lost)}):")
-    for username in lost:
-        print(f"- {username}")
-
-def run_check(client, username, target_username):
-    old_followers = load_saved_followers(target_username)
-    new_followers = load_followers(client, target_username)
-    
-    gained, lost = compare_followers(old_followers, new_followers)
-    print_changes(gained, lost, new_followers)
-    
-    save_followers(new_followers, target_username)
-    print(f"\nCheck completed at {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
+def unfollow_user(client, user):
+    """Unfollows a single user."""
+    try:
+        client.user_unfollow(user.pk)
+        print(f"Unfollowed {user.username} ({user.full_name})")
+    except Exception as e:
+        print(f"Could not unfollow {user.username}: {e}")
 
 def main():
-    username, password = get_user_credentials()
-    
+    """
+    Logs into Instagram, gets the list of non-followers, and unfollows them after confirmation.
+    """
+    session_file = "session.json"
     client = Client()
+
     try:
-        client.login(username, password)
+        if os.path.exists(session_file):
+            client.load_settings(session_file)
+            client.login_by_sessionid(client.sessionid)
+            print("Login successful from session!")
+            username = client.username
+        else:
+            username, password = get_user_credentials()
+            client.login(username, password)
+            client.dump_settings(session_file)
+            print("Login successful and session saved!")
+
     except Exception as e:
         if "two-factor authentication" in str(e).lower():
             otp = input("Enter the OTP sent to your device: ")
+            username, password = get_user_credentials()
             client.login(username, password, verification_code=otp)
+            client.dump_settings(session_file)
+            print("Login successful and session saved!")
         else:
             raise e
-    
-    print("Login successful!")
-    
-    target_username = input("Enter the Instagram username to track: ")
-    interval = input("Enter the interval in minutes for automatic checks (leave blank for a single check): ")
-    
-    if interval:
-        interval = int(interval)
-        print(f"Running automatic checks every {interval} minutes. Press Ctrl+C to stop.")
-        while True:
-            run_check(client, username, target_username)
-            time.sleep(interval * 60)
-    else:
-        run_check(client, username, target_username)
+
+    non_followers = get_non_followers(client, username)
+
+    if not non_followers:
+        print("You have no users to unfollow.")
+        return
+
+    print(f"Found {len(non_followers)} users that you follow but they don't follow you back.")
+    print("Users to unfollow:")
+    for user in non_followers:
+        print(f"- {user.username} ({user.full_name})")
+
+    for user in non_followers:
+        confirm = input(f"Unfollow {user.username}? (y/n): ")
+        if confirm.lower() == 'y':
+            unfollow_user(client, user)
+
+    print("Unfollowing process completed.")
 
 if __name__ == "__main__":
     main()
